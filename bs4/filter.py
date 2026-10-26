@@ -680,3 +680,45 @@ class SoupStrainer(ElementFilter):
         :meta private:
         """
         return element if self.match(element) else None
+
+
+class SoupReplacer(object):
+    """Replaces one tag name with another *while the document is being
+    parsed*, instead of in a second pass over the finished parse tree.
+
+    Pass an instance to the `BeautifulSoup` constructor as ``replacer``::
+
+        b_to_blockquote = SoupReplacer("b", "blockquote")
+        soup = BeautifulSoup(html_doc, "html.parser", replacer=b_to_blockquote)
+
+    Every ``<b>`` start tag (and its matching ``</b>`` end tag) is turned
+    into ``blockquote`` the moment the parser reports it, before the `Tag`
+    object is created. Because the `Tag` is built with its final name,
+    everything that depends on the name (void-element handling, whitespace
+    preservation, multi-valued attributes, the open-tag bookkeeping used to
+    match end tags) is computed for the *new* name, which cannot be
+    guaranteed when a tag is renamed afterwards with ``tag.name = ...``.
+
+    If a `SoupStrainer` is also given as ``parse_only``, the strainer is
+    applied first, to the tag names as they appear in the source document.
+
+    Supported tree builders: ``html.parser``, ``lxml`` and ``lxml-xml``.
+    (html5lib builds its own tree, so it ignores ``replacer``.)
+
+    :param og_tag: The name of the tag to replace.
+    :param alt_tag: The name to use instead.
+    """
+
+    def __init__(self, og_tag: str, alt_tag: str):
+        for label, value in (("og_tag", og_tag), ("alt_tag", alt_tag)):
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{label} must be a non-empty string, got {value!r}")
+        self.og_tag = og_tag
+        self.alt_tag = alt_tag
+
+    def replace(self, name: str) -> str:
+        """Return the name a tag called `name` should have in the tree."""
+        return self.alt_tag if name == self.og_tag else name
+
+    def __repr__(self) -> str:
+        return f"SoupReplacer({self.og_tag!r}, {self.alt_tag!r})"

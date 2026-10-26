@@ -33,6 +33,7 @@ __all__ = [
     "Tag",
     "TemplateString",
     "ElementFilter",
+    "SoupReplacer",
     "UnicodeDammit",
     "CData",
     "Doctype",
@@ -90,6 +91,7 @@ from .element import (
 from .formatter import Formatter
 from .filter import (
     ElementFilter,
+    SoupReplacer,
     SoupStrainer,
 )
 from typing import (
@@ -180,6 +182,7 @@ class BeautifulSoup(Tag):
     is_xml: bool
     known_xml: Optional[bool]
     parse_only: Optional[SoupStrainer]  #: :meta private:
+    replacer: Optional[SoupReplacer]  #: :meta private:
 
     # These members are only used while parsing markup.
     markup: Optional[_RawMarkup]  #: :meta private:
@@ -212,6 +215,7 @@ class BeautifulSoup(Tag):
         features: Optional[Union[str, Sequence[str]]] = None,
         builder: Optional[Union[TreeBuilder, Type[TreeBuilder]]] = None,
         parse_only: Optional[SoupStrainer] = None,
+        replacer: Optional[SoupReplacer] = None,
         from_encoding: Optional[_Encoding] = None,
         exclude_encodings: Optional[_Encodings] = None,
         element_classes: Optional[Dict[Type[PageElement], Type[PageElement]]] = None,
@@ -239,6 +243,11 @@ class BeautifulSoup(Tag):
          matching the SoupStrainer will be considered. This is useful
          when parsing part of a document that would otherwise be too
          large to fit into memory.
+
+        :param replacer: A SoupReplacer. Tags it names are renamed as
+         the document is parsed, instead of in a second pass over the
+         finished tree. If a parse_only SoupStrainer is also given, it
+         is applied first, to the original tag names.
 
         :param from_encoding: A string indicating the encoding of the
          document to be parsed. Pass this in if Beautiful Soup is
@@ -435,6 +444,7 @@ class BeautifulSoup(Tag):
         self.known_xml = self.is_xml
         self._namespaces = dict()
         self.parse_only = parse_only
+        self.replacer = replacer
 
         if hasattr(markup, "read"):  # It's a file-type object.
             markup = markup.read()
@@ -1025,6 +1035,11 @@ class BeautifulSoup(Tag):
         ):
             return None
 
+        # Rename the tag *before* the Tag object exists, so that the
+        # whole parse sees only the replacement name.
+        if self.replacer is not None:
+            name = self.replacer.replace(name)
+
         tag_class = self.element_classes.get(Tag, Tag)
         # Assume that this is either Tag or a subclass of Tag. If not,
         # the user brought type-unsafety upon themselves.
@@ -1060,6 +1075,10 @@ class BeautifulSoup(Tag):
         """
         # print("End tag: " + name)
         self.endData()
+        # The tree builder reports the original name; the open tag on
+        # the stack carries the replacement name.
+        if self.replacer is not None:
+            name = self.replacer.replace(name)
         self._popToTag(name, nsprefix)
 
     def handle_data(self, data: str) -> None:

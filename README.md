@@ -130,3 +130,12 @@ To go beyond the basics, [comprehensive documentation is available](https://www.
 
 
 
+
+# Milestone 2
+
+See [apps/m2/M2-README.md](apps/m2/M2-README.md) for the SoupStrainer apps, the
+source-code map, and the new `SoupReplacer` API. To build and test everything:
+
+```bash
+./build.sh
+```

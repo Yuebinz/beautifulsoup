@@ -182,7 +182,14 @@ class BeautifulSoupHTMLParser(HTMLParser, DetectsXMLParsedAsHTML):
         tag = self.soup.handle_starttag(
             name, None, None, attr_dict, sourceline=sourceline, sourcepos=sourcepos
         )
-        if tag and tag.is_empty_element and handle_empty_element:
+        # Whether the *source* tag is an empty-element tag is decided by the
+        # name html.parser reported, not by tag.name, which a SoupReplacer
+        # may already have changed. (Without a replacer, the two checks agree.)
+        if (
+            tag
+            and handle_empty_element
+            and self.soup.builder.can_be_empty_element(name)
+        ):
             # Unlike other parsers, html.parser doesn't send separate end tag
             # events for empty-element tags. (It's handled in
             # handle_startendtag, but only if the original markup looked like

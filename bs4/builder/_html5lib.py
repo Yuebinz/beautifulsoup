@@ -124,6 +124,12 @@ class HTML5TreeBuilder(HTMLTreeBuilder):
                 stacklevel=4,
             )
 
+        if self.soup is not None and getattr(self.soup, "replacer", None) is not None:
+            warnings.warn(
+                "You provided a value for replacer, but the html5lib tree builder doesn't support replacer. No tags will be replaced.",
+                stacklevel=4,
+            )
+
         # self.underlying_builder is probably None now, but it'll be set
         # when html5lib calls self.create_treebuilder().
         parser = html5lib.HTMLParser(tree=self.create_treebuilder)
