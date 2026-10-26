@@ -19,70 +19,87 @@ source .venv/bin/activate
 # a large test file (about 20 MB; use --mb 4 for a quick run)
 python apps/m2/make_large_html.py /tmp/large.html --mb 20
 
-python apps/m2/task2.py /tmp/large.html     # SoupStrainer: all hyperlinks
-python apps/m2/task3.py /tmp/large.html     # SoupStrainer: all text nodes
-python apps/m2/task4.py /tmp/large.html     # SoupStrainer: all elements with an id
-python apps/m2/task6.py /tmp/large.html     # SoupReplacer: <b> -> <blockquote>
+python apps/m2/task2.py /tmp/large.html --compare   # SoupStrainer: all <a> tags
+python apps/m2/task3.py /tmp/large.html --compare   # SoupStrainer: all tag names
+python apps/m2/task4.py /tmp/large.html --compare   # SoupStrainer: tags with an id
+python apps/m2/task6.py /tmp/large.html out.html --compare   # SoupReplacer: <b> -> <blockquote>
 ```
 
-Each app also runs the Milestone-1 style "parse everything, then search/rename"
-version and prints whether both give identical results, plus timings
-(`--memory` adds peak memory, `--no-baseline` skips the comparison,
-`--parser lxml` switches parser). The generated file is not committed.
+Each app prints its results and its parse time; `--compare` also runs the Milestone-1 style
+"parse everything, then search/rename" version and says whether the results are identical
+(`--memory` adds peak memory, but slows parsing a lot). The generated file is not committed.
 
 ---
 
 ## Part 1 - SoupStrainer applications
 
-| App | Strainer | What survives parsing |
-|---|---|---|
-| `task2.py` | `SoupStrainer("a", href=True)` | only `<a href>` elements |
-| `task3.py` | `SoupStrainer(string=True)` | only text nodes (a flat list; every Tag is dropped) |
-| `task4.py` | `SoupStrainer(id=True)` | only elements with an `id` (and their descendants) |
+These are the Milestone-1 tasks 2, 3 and 4, re-done with a `SoupStrainer`. They take the
+input file as the first argument and print the same kind of output as the Milestone-1 scripts
+(`.xml` files use the `xml` parser, with the same fallback to `html.parser` if lxml is missing).
+`--compare` also runs the Milestone-1 way (parse everything, then `find_all`) and checks that the
+results are identical.
 
-Measured on a generated 4 MB file with `html.parser` (the 20 MB file shows the same ratios;
-the strainer runs finish in a few seconds, the full parses take minutes):
+| App | Milestone-1 task | Strainer | What survives parsing |
+|---|---|---|---|
+| `task2.py` | print every `<a>` | `SoupStrainer("a")` | only `<a>` elements |
+| `task3.py` | print every tag name | `SoupStrainer(name=True)` | every tag (nothing can be skipped) |
+| `task4.py` | print tags with an `id` | `SoupStrainer(id=True)` | only elements with an `id` (and their descendants) |
+
+Measured on a generated 4 MB file with `html.parser` (`make_large_html.py`):
 
 | App | with SoupStrainer | full parse + search |
 |---|---|---|
-| task2 | 1.2 s | 16.0 s |
-| task3 | 1.8 s | 17.2 s |
-| task4 | 15.3 s | 16.0 s |
+| task2 | about 1.2 s | about 16 s |
+| task3 | 13.3 s | 16.3 s |
+| task4 | about 15 s | about 16 s |
 
 Notes worth knowing:
 
+* **Task 3 is the one a strainer cannot really speed up.** The task needs every tag, so the
+  strainer must accept the root element and with it the whole document. The result is identical to a
+  normal parse and the time is nearly the same. A strainer pays off when it can throw most of the
+  document away (task2).
 * **Task 4 gains little** because a strainer keeps the *entire subtree* of every matching
   element. Here each `<div id=...>` wraps most of the document, so most of it is kept.
-* **Task 3 caveat.** In a normal parse, text inside `<script>`/`<style>` and comments become the
-  classes `Script`/`Stylesheet`/`Comment`, which `get_text()` skips. A strainer drops the enclosing
-  `<script>` tag, so that text comes back as ordinary `NavigableString`s. The app therefore compares
-  *all* text nodes (`find_all(string=True)`) instead of `get_text()`.
 
 ## Part 2 - Where the API functions are defined in the original source
 
-All line numbers refer to the **original, unmodified** source, i.e. the commit
+All line numbers refer to the **original, unmodified** source, i.e. the first commit
 `repository initialization` (`git show <that commit>:bs4/element.py`, etc.). Lines in the working
 tree have shifted since, because of Part 3.
 
-### Functions used by the Milestone-2 programs
+### Functions used in Milestone 1 (tasks 1-8)
 
-| API used | Defined in | Line |
+| API (where used) | Defined in | Line |
 |---|---|---|
-| `BeautifulSoup(...)` constructor (`parse_only=`) | `bs4/__init__.py`, `BeautifulSoup.__init__` | 209 (parse_only handled at 323-331 and 437) |
-| `SoupStrainer(...)` constructor | `bs4/filter.py`, `SoupStrainer.__init__` | 345 (class starts at 313) |
-| `SoupStrainer.excludes_everything` | `bs4/filter.py` | 399 |
-| `SoupStrainer.allow_tag_creation` (called while parsing) | `bs4/filter.py` | 580 |
-| `SoupStrainer.allow_string_creation` (called while parsing) | `bs4/filter.py` | 621 |
-| `Tag.find_all` | `bs4/element.py`, `Tag.find_all` | 2715 |
-| `Tag.find` | `bs4/element.py`, `Tag.find` | 2684 |
-| `ElementFilter.find_all` / `find` (used by the two above) | `bs4/filter.py` | 137 / 123 |
-| `tag["href"]` | `bs4/element.py`, `Tag.__getitem__` | 2203 |
-| `tag.name = ...` (plain attribute set in the constructor) | `bs4/element.py`, `Tag.__init__` | 1618 |
-| `str(soup)` | `BeautifulSoup.decode` in `bs4/__init__.py` / `Tag.__str__` and `Tag.decode` in `bs4/element.py` | 1073 / 2302 / 2334 |
-| `soup.prettify()` | `bs4/element.py`, `Tag.prettify` | 2601 |
-| `soup.strings`, `get_text()` | `Tag._all_strings`, `PageElement.get_text` | 1873 / 524 |
+| `BeautifulSoup(markup, parser)` (all tasks) | `bs4/__init__.py`, `BeautifulSoup.__init__` | 209 |
+| `FeatureNotFound` (raised by the constructor; caught in `load_soup`) | `bs4/exceptions.py`, class; raised in `bs4/__init__.py` | 10; 364 |
+| `soup.prettify()` (task 1) | `bs4/element.py`, `Tag.prettify` | 2601 |
+| `str(soup)` (tasks 6, 7) | `BeautifulSoup.decode` in `bs4/__init__.py`; `Tag.__str__` and `Tag.decode` in `bs4/element.py` | 1073; 2302, 2334 |
+| `soup.find_all("a")`, `find_all(True)`, `find_all(id=True)`, `find_all("b")`, `find_all("p")` (tasks 2-7) | `bs4/element.py`, `Tag.find_all` (which calls `PageElement._find_all`) | 2715 (`_find_all` at 1079) |
+| `tag["id"]` (task 4) | `bs4/element.py`, `Tag.__getitem__` | 2203 |
+| `tag.get("id")` (task 5) | `bs4/element.py`, `Tag.get` | 2160 |
+| `tag.name` (tasks 3, 4, 5, 8) and `b.name = "blockquote"` (task 6): a plain attribute | set in `Tag.__init__` (`self.name = name`) | 1618 (assignment at 1648) |
+| `p["class"] = "test"` (task 7) | `bs4/element.py`, `Tag.__setitem__` | 2223 |
+| `a.find_parent([...])` (task 5) | `bs4/element.py`, `PageElement.find_parent` (calls `find_parents`) | 992 (`find_parents` at 1022) |
+| `a.get_text(strip=True)` (tasks 5, 8) | `bs4/element.py`, `PageElement.get_text` (uses `_all_strings`) | 524 (`_all_strings` at 504, `Tag._all_strings` at 1873) |
+| `soup.title` (task 8) | `bs4/element.py`, `Tag.__getattr__` (looks up the first `<title>` tag) | 2249 |
+| `soup.select("h1, h2, h3")` (task 8) | `bs4/element.py`, `Tag.select` | 2799 |
+| `h.find_next_sibling()` (task 8) | `bs4/element.py`, `PageElement.find_next_sibling` | 803 |
 
-### How the parser reaches them (where `parse_only` takes effect)
+### Functions used in Milestone 2, Part 1 and Part 3
+
+| API | Defined in | Line |
+|---|---|---|
+| `BeautifulSoup(..., parse_only=...)` | `bs4/__init__.py`, `BeautifulSoup.__init__` (parse_only handled at 323-331 and 437) | 209 |
+| `SoupStrainer(...)` constructor | `bs4/filter.py`, `SoupStrainer.__init__` (class starts at 313) | 345 |
+| `SoupStrainer.excludes_everything` | `bs4/filter.py` | 399 |
+| `SoupStrainer.allow_tag_creation` (called by the parser for each start tag) | `bs4/filter.py` | 580 |
+| `SoupStrainer.allow_string_creation` (called by the parser for each text) | `bs4/filter.py` | 621 |
+| `ElementFilter.find_all` / `find` | `bs4/filter.py` | 137 / 123 |
+| `Tag.find` | `bs4/element.py` | 2684 |
+
+### How the parser reaches them (where `parse_only` takes effect, and where SoupReplacer hooks in)
 
 | Step | Defined in | Line |
 |---|---|---|
@@ -94,23 +111,6 @@ tree have shifted since, because of Part 3.
 | `BeautifulSoup.endData` (strainer check at 856-861) | `bs4/__init__.py` | 826 |
 | `BeautifulSoup._popToTag` | `bs4/__init__.py` | 950 |
 | `BeautifulSoup.pushTag` / `popTag` | `bs4/__init__.py` | 809 / 786 |
-
-### Tree-editing functions (Milestone-1 tasks 5-7: add / replace nodes)
-
-*Listed so the table covers the add/replace APIs; tick off the ones your Milestone-1 code actually calls.*
-
-| API | Defined in | Line |
-|---|---|---|
-| `BeautifulSoup.new_tag` | `bs4/__init__.py` | 682 |
-| `BeautifulSoup.new_string` | `bs4/__init__.py` | 757 |
-| `Tag.append` / `Tag.extend` / `Tag.insert` | `bs4/element.py` | 2046 / 2056 / 1916 |
-| `PageElement.insert_before` / `insert_after` | `bs4/element.py` | 689 / 716 |
-| `PageElement.replace_with` | `bs4/element.py` | 552 |
-| `PageElement.wrap` / `Tag.unwrap` | `bs4/element.py` | 577 / 2022 |
-| `PageElement.extract` / `decompose` | `bs4/element.py` | 587 / 635 |
-| `Tag.string` (getter / setter) | `bs4/element.py` | 1837 / 1861 |
-| `Tag.select` / `select_one` | `bs4/element.py` | 2799 / 2782 |
-| `Tag.children` / `Tag.descendants` | `bs4/element.py` | 2752 / 2764 |
 
 ## Part 3 - SoupReplacer
 

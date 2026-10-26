@@ -1,53 +1,46 @@
-"""Task 3 (SoupStrainer version): collect every text node of a large file.
+"""Task 3 (SoupStrainer version): print the name of every tag.
 
-SoupStrainer(string=True) accepts text nodes and (since no tag restriction
-is given) lets the parser throw every Tag away, so the "tree" is just a flat
-list of strings.
+Honest result: this is the task where SoupStrainer helps least. Every tag has
+to be kept, so the strainer (name=True, "match any tag") accepts the root
+element and with it the whole document. The tree has the same tags as a plain
+parse, and the time is almost the same (on a 4 MB file: 13.3 s vs 16.3 s). A
+strainer only saves a lot when it can *reject* big parts of the document,
+as in task2.
 
-Caveat worth knowing: with a normal parse, text inside <script>/<style> and
-comments become the special classes Script / Stylesheet / Comment. A strainer
-discards the enclosing <script>/<style> tag, so those strings come back as
-plain NavigableStrings. That is why both versions here compare *all* text
-nodes (``string=True``) rather than ``get_text()``, which skips those classes.
-
-Usage: python apps/m2/task3.py FILE [--parser html.parser] [--limit 10] [--no-baseline] [--memory]
+Usage: python task3.py <input_file> [--compare] [--memory]
 """
 import argparse
 
 import _common
-from bs4 import BeautifulSoup, SoupStrainer
+from bs4 import SoupStrainer
 
 
-def text_with_strainer(markup, parser):
-    only_text = SoupStrainer(string=True)
-    soup = BeautifulSoup(markup, parser, parse_only=only_text)
-    return [str(s) for s in soup.find_all(string=True)]
+def get_tags(path):
+    soup = _common.load_soup(path, parse_only=SoupStrainer(name=True))
+    return soup.find_all(True)
 
 
-def text_full_parse(markup, parser):  # Milestone-1 style, used for comparison
-    soup = BeautifulSoup(markup, parser)
-    return [str(s) for s in soup.find_all(string=True)]
+def get_tags_full_parse(path):  # Milestone-1 version, for --compare
+    return _common.load_soup(path).find_all(True)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("file")
-    ap.add_argument("--parser", default=_common.DEFAULT_PARSER)
-    ap.add_argument("--limit", type=int, default=10)
-    ap.add_argument("--no-baseline", action="store_true")
+    ap.add_argument("--compare", action="store_true")
     ap.add_argument("--memory", action="store_true", help="also report peak memory (slow)")
     args = ap.parse_args()
     _common.TRACK_MEMORY = args.memory
 
-    markup = _common.read_markup(args.file)
-    texts, secs, peak = _common.measure(lambda: text_with_strainer(markup, args.parser))
-    print(f"Task 3: {len(texts)} text nodes found")
-    _common.preview([t.strip()[:70] for t in texts if t.strip()], args.limit)
+    tags, secs, peak = _common.measure(lambda: get_tags(args.file))
+    for tag in tags:
+        print(tag.name)
+    print(f"\nTotal tags: {len(tags)}")
     _common.report("SoupStrainer parse", secs, peak)
-    if not args.no_baseline:
-        base, bsecs, bpeak = _common.measure(lambda: text_full_parse(markup, args.parser))
-        _common.report("full parse (baseline)", bsecs, bpeak)
-        print("  results identical to full parse:", base == texts)
+    if args.compare:
+        base, bsecs, bpeak = _common.measure(lambda: get_tags_full_parse(args.file))
+        _common.report("full parse (Milestone 1)", bsecs, bpeak)
+        print("  same tags as full parse:", [t.name for t in base] == [t.name for t in tags])
 
 
 if __name__ == "__main__":

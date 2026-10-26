@@ -15,10 +15,24 @@ if REPO_ROOT not in sys.path:
 DEFAULT_PARSER = "html.parser"
 
 
-def read_markup(path):
-    """Read the file once so that file I/O is not part of the timings."""
-    with open(path, "rb") as f:
-        return f.read()
+def parser_for(path):
+    """Same rule as the Milestone-1 scripts: the xml parser for .xml files."""
+    return "xml" if path.lower().endswith(".xml") else DEFAULT_PARSER
+
+
+def load_soup(path, **kwargs):
+    """Like Milestone 1's load_soup(), but accepts parse_only= / replacer=.
+
+    Falls back to html.parser when lxml (needed for "xml") is not installed.
+    """
+    from bs4 import BeautifulSoup, FeatureNotFound
+
+    with open(path, encoding="utf-8", errors="replace") as f:
+        try:
+            return BeautifulSoup(f, parser_for(path), **kwargs)
+        except FeatureNotFound:
+            f.seek(0)
+            return BeautifulSoup(f, DEFAULT_PARSER, **kwargs)
 
 
 TRACK_MEMORY = False  # set by --memory; tracemalloc slows parsing several-fold
