@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections import defaultdict
+from collections.abc import Mapping
 import re
 from typing import (
     Any,
@@ -12,6 +13,7 @@ from typing import (
     Optional,
     Sequence,
     Type,
+    TYPE_CHECKING,
     Union,
 )
 import warnings
@@ -24,6 +26,8 @@ from bs4.element import (
     ResultSet,
     Tag,
 )
+if TYPE_CHECKING:
+    from bs4.builder import TreeBuilder
 from bs4._typing import (
     _AtMostOneElement,
     _AttributeValue,
@@ -683,42 +687,150 @@ class SoupStrainer(ElementFilter):
 
 
 class SoupReplacer(object):
-    """Replaces one tag name with another *while the document is being
-    parsed*, instead of in a second pass over the finished parse tree.
+    """Rewrites tags *while the document is being parsed*, instead of in a
+    second pass over the finished parse tree.
 
-    Pass an instance to the `BeautifulSoup` constructor as ``replacer``::
+    There are two ways to build one. Pass an instance to the `BeautifulSoup`
+    constructor as ``replacer``.
+
+    **Milestone-2 style: a replacement pair.**::
 
         b_to_blockquote = SoupReplacer("b", "blockquote")
         soup = BeautifulSoup(html_doc, "html.parser", replacer=b_to_blockquote)
 
-    Every ``<b>`` start tag (and its matching ``</b>`` end tag) is turned
-    into ``blockquote`` the moment the parser reports it, before the `Tag`
-    object is created. Because the `Tag` is built with its final name,
+    **Milestone-3 style: transformer functions.** Each one is called with the
+    `Tag` the parser has just created (its name and attributes are already
+    filled in; its contents are not, because the tag is still open)::
+
+        b_to_blockquote = SoupReplacer(
+            name_xformer=lambda tag: "blockquote" if tag.name == "b" else tag.name
+        )
+
+        def remove_class_attr(tag):
+            if "class" in tag.attrs:
+                del tag.attrs["class"]
+        class_deleter = SoupReplacer(xformer=remove_class_attr)
+
+    * ``name_xformer(tag)`` returns the tag's new name (a non-empty string).
+    * ``attrs_xformer(tag)`` returns the tag's new attributes (a dict).
+    * ``xformer(tag)`` may change the tag in any way (add or delete
+      attributes, set ``tag.string``, ...). Its return value is ignored.
+
+    When several are given, ``name_xformer`` and ``attrs_xformer`` are both
+    called on the tag *as the parser built it* (so neither sees the other's
+    result), their results are applied, and then ``xformer`` runs on the
+    updated tag. A replacement pair, if also given, is applied first, so the
+    transformers see the already-renamed tag.
+
+    A transformer receives a *start tag only*: it can look at the tag's name
+    and attributes (and its ``parent``, which is already in the tree), but
+    not at its children or later siblings, which have not been parsed yet.
+
+    Because the `Tag` gets its final name before it enters the tree,
     everything that depends on the name (void-element handling, whitespace
-    preservation, multi-valued attributes, the open-tag bookkeeping used to
-    match end tags) is computed for the *new* name, which cannot be
-    guaranteed when a tag is renamed afterwards with ``tag.name = ...``.
+    preservation, multi-valued attributes, the bookkeeping used to match end
+    tags) is computed for the *new* name. (If ``xformer`` itself assigns
+    ``tag.name``, that bookkeeping is *not* redone; use ``name_xformer`` to
+    rename.)
 
     If a `SoupStrainer` is also given as ``parse_only``, the strainer is
-    applied first, to the tag names as they appear in the source document.
+    applied first, to the tags as they appear in the source document.
 
     Supported tree builders: ``html.parser``, ``lxml`` and ``lxml-xml``.
     (html5lib builds its own tree, so it ignores ``replacer``.)
 
-    :param og_tag: The name of the tag to replace.
-    :param alt_tag: The name to use instead.
+    :param og_tag: The name of the tag to replace (Milestone-2 pair).
+    :param alt_tag: The name to use instead (Milestone-2 pair).
+    :param name_xformer: ``tag -> new name``.
+    :param attrs_xformer: ``tag -> new attributes``.
+    :param xformer: ``tag -> None``; may have side effects on the tag.
     """
 
-    def __init__(self, og_tag: str, alt_tag: str):
-        for label, value in (("og_tag", og_tag), ("alt_tag", alt_tag)):
-            if not isinstance(value, str) or not value:
-                raise ValueError(f"{label} must be a non-empty string, got {value!r}")
+    def __init__(
+        self,
+        og_tag: Optional[str] = None,
+        alt_tag: Optional[str] = None,
+        *,
+        name_xformer: Optional[Callable[[Tag], str]] = None,
+        attrs_xformer: Optional[Callable[[Tag], Mapping[str, Any]]] = None,
+        xformer: Optional[Callable[[Tag], None]] = None,
+    ):
+        has_pair = og_tag is not None or alt_tag is not None
+        if has_pair:
+            for label, value in (("og_tag", og_tag), ("alt_tag", alt_tag)):
+                if not isinstance(value, str) or not value:
+                    raise ValueError(
+                        f"{label} must be a non-empty string, got {value!r}"
+                    )
+        for label, fn in (
+            ("name_xformer", name_xformer),
+            ("attrs_xformer", attrs_xformer),
+            ("xformer", xformer),
+        ):
+            if fn is not None and not callable(fn):
+                raise TypeError(f"{label} must be callable, got {fn!r}")
+        if not has_pair and not (name_xformer or attrs_xformer or xformer):
+            raise ValueError(
+                "SoupReplacer needs an (og_tag, alt_tag) pair or at least one of "
+                "name_xformer, attrs_xformer, xformer"
+            )
         self.og_tag = og_tag
         self.alt_tag = alt_tag
+        self.name_xformer = name_xformer
+        self.attrs_xformer = attrs_xformer
+        self.xformer = xformer
+        #: True if the parser must call `transform` on every new tag (and
+        #: match end tags by their source name instead of by mapping them).
+        self.uses_transformers = bool(name_xformer or attrs_xformer or xformer)
 
     def replace(self, name: str) -> str:
-        """Return the name a tag called `name` should have in the tree."""
+        """Return the name a tag called `name` should have, according to the
+        (og_tag, alt_tag) pair alone."""
         return self.alt_tag if name == self.og_tag else name
 
+    def transform(self, tag: Tag, builder: TreeBuilder) -> None:
+        """Apply the transformer functions to a tag the parser has just
+        created, before the tag is added to the tree.
+
+        :param tag: The new, still-open tag.
+        :param builder: The tree builder, used to recompute whatever depends
+            on the tag's name once it changes.
+        """
+        new_name = self.name_xformer(tag) if self.name_xformer else tag.name
+        new_attrs = self.attrs_xformer(tag) if self.attrs_xformer else None
+
+        if new_name != tag.name:
+            if not isinstance(new_name, str) or not new_name:
+                raise ValueError(
+                    f"name_xformer must return a non-empty string, got {new_name!r}"
+                )
+            tag.name = new_name
+            tag.can_be_empty_element = builder.can_be_empty_element(new_name)
+            if new_name in builder.string_containers:
+                tag.interesting_string_types = {builder.string_containers[new_name]}
+            else:
+                tag.interesting_string_types = tag.MAIN_CONTENT_STRING_TYPES
+            if new_attrs is None:
+                # Different tag names have different multi-valued attributes.
+                builder._replace_cdata_list_attribute_values(new_name, tag.attrs)
+            builder.set_up_substitutions(tag)
+
+        if new_attrs is not None:
+            if not isinstance(new_attrs, Mapping):
+                raise TypeError(
+                    f"attrs_xformer must return a dict, got {type(new_attrs).__name__}"
+                )
+            attrs = builder.attribute_dict_class(new_attrs)
+            tag.attrs = builder._replace_cdata_list_attribute_values(tag.name, attrs)
+
+        if self.xformer:
+            self.xformer(tag)
+
     def __repr__(self) -> str:
-        return f"SoupReplacer({self.og_tag!r}, {self.alt_tag!r})"
+        parts = []
+        if self.og_tag is not None:
+            parts.append(f"{self.og_tag!r}, {self.alt_tag!r}")
+        for label in ("name_xformer", "attrs_xformer", "xformer"):
+            if getattr(self, label) is not None:
+                parts.append(f"{label}=...")
+        return f"SoupReplacer({', '.join(parts)})"

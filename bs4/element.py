@@ -1752,6 +1752,12 @@ class Tag(PageElement):
     cdata_list_attributes: Optional[Dict[str, Set[str]]]
     preserve_whitespace_tags: Optional[Set[str]]
 
+    #: The name the source document used for this tag. Only set while a
+    #: SoupReplacer with transformer functions is parsing (so that end tags
+    #: can be matched); None otherwise.
+    #: :meta private:
+    _source_name: Optional[str] = None
+
     #: :meta private:
     parserClass = _deprecated_alias("parserClass", "parser_class", "4.0.0")
 

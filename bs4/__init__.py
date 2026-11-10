@@ -244,9 +244,9 @@ class BeautifulSoup(Tag):
          when parsing part of a document that would otherwise be too
          large to fit into memory.
 
-        :param replacer: A SoupReplacer. Tags it names are renamed as
-         the document is parsed, instead of in a second pass over the
-         finished tree. If a parse_only SoupStrainer is also given, it
+        :param replacer: A SoupReplacer. Its replacement pair and/or
+         transformer functions are applied to tags as the document is
+         parsed, instead of in a second pass over the finished tree. If a parse_only SoupStrainer is also given, it
          is applied first, to the original tag names.
 
         :param from_encoding: A string indicating the encoding of the
@@ -1037,6 +1037,7 @@ class BeautifulSoup(Tag):
 
         # Rename the tag *before* the Tag object exists, so that the
         # whole parse sees only the replacement name.
+        source_name = name
         if self.replacer is not None:
             name = self.replacer.replace(name)
 
@@ -1059,6 +1060,12 @@ class BeautifulSoup(Tag):
         )
         if tag is None:
             return tag
+        if self.replacer is not None and self.replacer.uses_transformers:
+            # Remember what the document called this tag, so that its end
+            # tag can still be matched, then let the transformers rewrite it.
+            # This happens before the tag enters the tree.
+            tag._source_name = source_name
+            self.replacer.transform(tag, self.builder)
         if self._most_recent_element is not None:
             self._most_recent_element.next_element = tag
         self._most_recent_element = tag
@@ -1078,8 +1085,27 @@ class BeautifulSoup(Tag):
         # The tree builder reports the original name; the open tag on
         # the stack carries the replacement name.
         if self.replacer is not None:
+            if self.replacer.uses_transformers:
+                self._popToSourceTag(name, nsprefix)
+                return
             name = self.replacer.replace(name)
         self._popToTag(name, nsprefix)
+
+    def _popToSourceTag(self, name: str, nsprefix: Optional[str] = None) -> None:
+        """Like `_popToTag`, but `name` is the name the *document* used.
+
+        With transformer functions a tag's name can no longer be computed
+        from its source name, so each open tag remembers its source name
+        (`_source_name`) and the end tag is matched against that.
+
+        :meta private:
+        """
+        for i in range(len(self.tagStack) - 1, 0, -1):
+            t = self.tagStack[i]
+            if getattr(t, "_source_name", None) == name and t.prefix == nsprefix:
+                while len(self.tagStack) > i:
+                    self.popTag()
+                return
 
     def handle_data(self, data: str) -> None:
         """Called by the tree builder when a chunk of textual data is

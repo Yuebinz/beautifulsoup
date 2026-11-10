@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and test this copy of BeautifulSoup (with the Milestone-2 additions).
+# Build and test this copy of BeautifulSoup (with the Milestone-2 and 3 additions).
 #
 # Usage:   ./build.sh [--no-tests] [--no-package]
 #   (default)     create .venv, install dependencies, install the library in
@@ -46,8 +46,8 @@ echo "==> Installing the library (editable)"
 python -m pip install --quiet -e .
 
 if [ "$RUN_TESTS" -eq 1 ]; then
-  echo "==> Running the Milestone-2 tests (must pass)"
-  python -m pytest bs4/tests/test_soupreplacer.py -q
+  echo "==> Running the Milestone-2 and Milestone-3 tests (must pass)"
+  python -m pytest bs4/tests/test_soupreplacer.py bs4/tests/test_soupreplacer_m3.py -q
 
   echo "==> Running the full test-suite"
   # A few pre-existing lxml tests (test_real_xhtml_document,
