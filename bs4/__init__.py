@@ -673,6 +673,39 @@ class BeautifulSoup(Tag):
         ):
             self.popTag()
 
+    def __iter__(self) -> Iterator[PageElement]:
+        """Iterate over every node in the document, in document order.
+
+        (Milestone 4.) A `Tag` iterates over its direct children, but the
+        `BeautifulSoup` object is the whole document, so iterating over it
+        visits the whole tree: tags, strings, comments, doctypes, and so on,
+        parents before children (the same order as `.descendants`). The root
+        object itself is not yielded.
+
+        This is a generator that walks the `next_element` links one step at
+        a time. It never builds a list of the nodes, so memory use does not
+        grow with the size of the document, and stopping early costs nothing.
+        The loop body may extract() or decompose() the node it was just
+        given: the walk then carries on with whatever now follows it.
+
+            for node in soup:
+                print(node)
+        """
+        current = self.contents[0] if self.contents else None
+        while current is not None:
+            previous = current.previous_element
+            yield current
+            if getattr(current, "_decomposed", False) or current.parent is None:
+                # The caller removed this node (and its subtree). Its own
+                # links are gone, but the element before it was re-linked to
+                # whatever came after the subtree.
+                if previous is not None:
+                    current = previous.next_element
+                else:
+                    current = self.contents[0] if self.contents else None
+            else:
+                current = current.next_element
+
     def reset(self) -> None:
         """Reset this object to a state as though it had never parsed any
         markup.
